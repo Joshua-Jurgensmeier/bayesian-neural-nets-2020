@@ -2,54 +2,60 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import datasets, transforms
-from bnn import *
 import _pickle as pickle
-import matplotlib.pyplot as plt
+import torch.cuda
+from bnn import *
 
+
+
+# Network parameters
+NET_DIM_H1  = 150
+NET_DIM_H2  = 150
+CATEGORIES  = 10
+BATCH_SIZE  = 32
+LEARN_RATE  = 0.3
+EPOCHS      = 1
+DEVICE      = 'cuda'
+CHAIN_SMAPLES = 100
+
+# Data parameters
+# These will put our datasets in the same range and help with training on MNIST
 MNIST_MEAN = 0.1307
-MNIST_STD = 0.3081
+MNIST_STD  = 0.3081
+MNIST_TRANS = transforms.Compose([
+                transforms.ToTensor(), 
+                transforms.Normalize((MNIST_MEAN,), (MNIST_STD,))])
 
-print("Loading data")
+if __name__ == "__main__":
+    print("Initializing datasets...")
+    train_set = datasets.MNIST('C:/data', 
+                        train=True, 
+                        download=True, 
+                        transform=MNIST_TRANS)
 
-train_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('./data', 
-                    train=True, 
-                    download=True, 
-                    transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((MNIST_MEAN,), (MNIST_STD,))])), 
-    shuffle=False)
+    test_set = datasets.MNIST('C:/data', 
+                        train=False, 
+                        transform=MNIST_TRANS)
 
-test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('./data', 
-                    train=False, 
-                    transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((MNIST_MEAN,), (MNIST_STD,))])), 
-    shuffle=False)
+    fashion_set = datasets.FashionMNIST('C:/data',
+                        train=False,
+                        download=True,
+                        transform=MNIST_TRANS)
 
-print("Initializing Network...")
-bnn = BayesNet(train_loader, 150, 150, 10)
-print("Network initialized, Beginning training")
+    print("Initializing Network...")
+    net = MCMCBayesNet(NET_DIM_H1, NET_DIM_H2, CATEGORIES, train_set, DEVICE)
 
-# Train, or recover previous training.
-recover = True
-if recover:
-    with open('samples.txt', 'rb') as file:
-        bnn.samples = pickle.load(file)
-else:
-    bnn.train(500, 280)
-    with open('samples.txt', 'wb') as file:
-        pickle.dump(bnn.samples, file)
+    print("Network initialized, maximizing posterior on MNIST...")
+    net.maximize_posterior(EPOCHS, BATCH_SIZE, LEARN_RATE)
 
-results = [0]*10
+    print("Testing MAP estimate...")
+    net.test_network(test_set, BATCH_SIZE)
 
-print("Testing predictive distribution...")
-for x, y in test_loader:
-    print("Actual:")
-    print(y)
-    print("Output")
-    out = bnn.predictive(x)
-    results[out.item()] += 1
-    print()
+    print("Initializing Markov Chain and Monte Carlo samples...")
+    net.init_predictive(CHAIN_SMAPLES)
 
-ax = fig.add_axes([0,0,1,1])
-labels = [str(x) for x in range(10)]
-ax.bar(labels, results)
-plt.show()
+    print("Testing the estimated posterior predictive distribution on MNIST...")
+    net.test_predictive(test_set)
+
+    print("Now testing on Fashion MNIST, coefficient of deviation should be higher...")
+    net.test_predictive(fashion_set)
